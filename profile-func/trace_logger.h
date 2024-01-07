@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <zlib.h>
 #include <pthread.h>
+#include <string>
 #include <map>
 
 #define RESULT_LINE 19134

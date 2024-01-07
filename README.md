@@ -1,4 +1,4 @@
-LLVM IR Trace Profiler (LLVM-Tracer) 2.0
+LLVM IR Trace Profiler (LLVM-Tracer) vX
 ========================================
 LLVM-Tracer is an LLVM instrumentation pass to print out a dynamic LLVM IR
 trace, including dynamic register values and memory addresses.
@@ -14,20 +14,26 @@ International Symposium on Performance Analysis of Systems and Software
 
 Requirements:
 -------------------
-We *highly* recommend that users use the provided Docker image, available for
-download [here](https://hub.docker.com/repository/docker/xyzsam/gem5-aladdin).
-This will solve basically all environment issues. If you cannot use Docker,
-then read on.
 
-  1. LLVM 6.0 and Clang 6.0 64-bit. Users cannot download a pre-built package
+  1. LLVM 18.0 and Clang 18.0 64-bit. Users cannot download a pre-built package
      because the Release build type strips value names from LLVM IR, and
      working around this is difficult. Instead, users must built the toolchain
      from source.
   2. GCC 5.4 or later.
-  3. CMake 2.8.12 or newer.
+  3. CMake 3.25.x or newer.
 
 Changelog:
 -----------------
+
+### January 2023: v3 updated to LLVM 18 ###
+
+**Breaking changes from v2.0 to v3.0:**
+
+  * This fork of LLVM-Tracer uses LLVM 18.0, and does not support previous
+    versions of LLVM.
+  * Following advice from the previous version, it is *highly* recommended
+    that you build the `Debug` build type of LLVM by adding the cmake flag
+    `-DCMAKE_BUILD_TYPE=Debug` when building.
 
 ### Feburary 2020: v2 new features ###
 
@@ -75,36 +81,30 @@ Build:
 -----------------
 
   CMake is a configure tool which allows you to do out-of-source build.
-  LLVM-Tracer requires CMake newer than 2.8.12. By default, CMake
-  searches for LLVM 6.0.
+  This version of LLVM-Tracer requires CMake newer than 3.25. By default, 
+  CMake searches for LLVM 18.0.0.
 
   1. Set `LLVM_HOME` to where you installed LLVM
      ```
      export LLVM_HOME=/path/to/your/llvm/installation
      ```
+     which defaults to
+     ```
+     export LLVM_HOME=/usr/local
+     ```
 
   2. Clone LLVM-Tracer.
 
      ```
-     git clone https://github.com/ysshao/LLVM-Tracer
+     git clone https://github.com/jack2bs/LLVM-Tracer.git
      cd LLVM-Tracer/
      ```
   3. Configure with CMake and build LLVM-Tracer source code.
 
-     If you have LLVM installed:
      ```
      mkdir build/
      cd build
      cmake ..
-     make
-     make install
-     ```
-
-     If you want CMake to install LLVM for you (CAUTION: takes an hour!):
-     ```
-     mkdir build/
-     cd build
-     cmake .. -DLLVM_ROOT=/where/to/install/LLVM -DAUTOINSTALL=TRUE -DCMAKE_BUILD_TYPE=Debug
      make
      make install
      ```
@@ -121,7 +121,10 @@ Build:
        You may denote the path of LLVM to find/install by this option. if
        this option is not defined, environment variable LLVM_HOME will be
        used.
+     ```
 
+     Past versions included the following settings, which are untested in this version
+     ```
      -DAUTOINSTALL=TRUE,FALSE    (default : FALSE)
        By this option, CMake scripts will automatically download, build and
        install LLVM for you if finds no LLVM installation. Using this
@@ -218,3 +221,4 @@ directory.
 
 ---------------------------------------------------------------------------------
 Sophia Shao, Sam Xi, and Emma Wang
+migrated to LLVM-18 by Jack Toubes

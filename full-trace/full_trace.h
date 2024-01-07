@@ -7,6 +7,7 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/ModuleSlotTracker.h"
+#include "llvm/ADT/MapVector.h"
 
 extern char s_phi[];
 
@@ -74,22 +75,25 @@ struct InstOperandParams {
     char *prev_bbid;
 };
 
-class Tracer : public FunctionPass {
+class Tracer : public llvm::AnalysisInfoMixin<Tracer> {
   public:
     Tracer();
+    Tracer(Tracer const & t);
     virtual ~Tracer() {}
     static char ID;
-
+    // llvm::PreservedAnalyses run(llvm::Function &F, llvm::FunctionAnalysisManager &);
+    llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
     virtual bool doInitialization(Module &M);
-    virtual bool runOnFunction(Function& F);
-    virtual bool runOnBasicBlock(BasicBlock &BB);
+    virtual bool runOnFunction(Function& F, llvm::FunctionAnalysisManager &FAM);
+    virtual bool runOnBasicBlock(BasicBlock &BB, LoopInfo &LI);
     virtual void getAnalysisUsage(AnalysisUsage& Info) const;
+    static bool isRequired() {return true;}
 
   private:
     // Instrumentation functions for different types of nodes.
-    void handlePhiNodes(BasicBlock *BB, InstEnv *env);
-    void handleCallInstruction(Instruction *inst, InstEnv *env);
-    void handleNonPhiNonCallInstruction(Instruction *inst, InstEnv *env);
+    void handlePhiNodes(BasicBlock *BB, InstEnv *env, LoopInfo &LI);
+    void handleCallInstruction(Instruction *inst, InstEnv *env, LoopInfo &LI);
+    void handleNonPhiNonCallInstruction(Instruction *inst, InstEnv *env, LoopInfo &LI);
     void handleInstructionResult(Instruction *inst, Instruction *next_inst,
                                  InstEnv *env);
 
@@ -107,7 +111,7 @@ class Tracer : public FunctionPass {
     // from which it is being called, and in this case, it's impossible to know
     // what the function argument names are until we run the optimization pass
     // on that module.
-    bool runOnFunctionEntry(Function& func);
+    bool runOnFunctionEntry(Function& func, LoopInfo &LI);
 
     // Set line number information in env for this inst if it is found.
     void setLineNumberIfExists(Instruction *I, InstEnv *env);
@@ -198,7 +202,7 @@ class Tracer : public FunctionPass {
     // of this basic block to the end of the ID like name:D.
     //
     // The ID is stored as a string in id_str.
-    void makeValueId(Value *value, char *id_str);
+    void makeValueId(Value *value, char *id_str, LoopInfo &LI);
 
     // Convert a floating point opcode to its corresponding integer opcode.
     //
@@ -262,14 +266,14 @@ class Tracer : public FunctionPass {
     VecBufKey createVecBufKey(Type *vector_type);
 
     // References to the logging functions.
-    Value *TL_log0;
-    Value *TL_log_int;
-    Value *TL_log_ptr;
-    Value *TL_log_string;
-    Value *TL_log_double;
-    Value *TL_log_vector;
-    Value *TL_log_entry;
-    Value *TL_update_status;
+    FunctionCallee TL_log0;
+    FunctionCallee TL_log_int;
+    FunctionCallee TL_log_ptr;
+    FunctionCallee TL_log_string;
+    FunctionCallee TL_log_double;
+    FunctionCallee TL_log_vector;
+    FunctionCallee TL_log_entry;
+    FunctionCallee TL_update_status;
 
     // The current module.
     Module *curr_module;
@@ -323,11 +327,19 @@ class Tracer : public FunctionPass {
  * The contents of the labelmap file are embedded into the instrumented binary,
  * so after the optimization pass is finished, the labelmap file is discarded.
  */
-class LabelMapHandler : public ModulePass {
+class LabelMapHandler : public llvm::AnalysisInfoMixin<LabelMapHandler> {
   public:
     LabelMapHandler();
+    LabelMapHandler(LabelMapHandler const & l);
+
     virtual ~LabelMapHandler();
     virtual bool runOnModule(Module &M);
+    static bool isRequired() {return true;}
+    llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &) 
+    {
+      runOnModule(M);
+      return PreservedAnalyses::none();
+    };
     static char ID;
 
   private:

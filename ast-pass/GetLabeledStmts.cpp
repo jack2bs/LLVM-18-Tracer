@@ -12,7 +12,7 @@
  *    SomeMangledFunctionName/bar 42
  *
  * Usage:
- *   ./get-labeled-stmts [SOURCE_FILES...] -- -I${LLVM_HOME}/lib/clang/3.4/include
+ *   ./get-labeled-stmts [SOURCE_FILES...] -- -I${LLVM_HOME}/lib/clang/18/include
  */
 
 #include <cstdio>
@@ -35,6 +35,7 @@
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace clang;
 using namespace clang::driver;
@@ -113,7 +114,7 @@ class LabeledStmtVisitor : public RecursiveASTVisitor<LabeledStmtVisitor> {
   // Add a (function,label) -> line number mapping.
   void addToLabelMap(LabelStmt* labelStmt, Stmt* subStmt,
                      const FunctionDecl* func) const {
-    SourceLocation loc = subStmt->getLocStart();
+    SourceLocation loc = subStmt->getBeginLoc();
     unsigned line = srcManager->getExpansionLineNumber(loc);
     const std::string& labelName = labelStmt->getName();
     const std::string& funcName = func->getQualifiedNameAsString();
@@ -214,7 +215,7 @@ class LabeledStmtASTConsumer : public ASTConsumer {
 class LabeledStmtFrontendAction : public ASTFrontendAction {
  public:
    virtual std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
-                                                          StringRef file) {
+                                                          StringRef file) {                                               
      return std::unique_ptr<ASTConsumer>(new LabeledStmtASTConsumer(&CI));
    }
 
@@ -309,7 +310,15 @@ static void cleanup() {
 }
 
 int main(int argc, const char** argv) {
-  CommonOptionsParser op(argc, argv, GetLabelStmtsCat);
+  // cl::OptionValue<std::string> temp{};
+  // OutputFileName.Default = temp;
+  auto first = CommonOptionsParser::create(argc, argv, GetLabelStmtsCat);
+  if (first.takeError())
+  {
+    std::cerr << "Unexpected llvm::Expected error\n";
+    return -1;
+  }
+  CommonOptionsParser &op = first.get();
   ClangTool Tool(op.getCompilations(), op.getSourcePathList());
   outputFileName = OutputFileName.getValue();
   cleanup();

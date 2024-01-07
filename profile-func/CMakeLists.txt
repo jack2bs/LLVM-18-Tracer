@@ -1,7 +1,7 @@
 set(FCTS "trace_logger")
 file(GLOB SRC "*.cpp")
 
-set(LLVMC_FLAGS ${LLVMC_FLAGS} "-O3" "-std=c++11" "-I${ZLIB_INCLUDE_DIRS}")
+set(LLVMC_FLAGS ${LLVMC_FLAGS} "-O3" "-std=c++17" "-I${ZLIB_INCLUDE_DIRS}")
 
 build_llvm_bitcode(${FCTS} SRC)
 

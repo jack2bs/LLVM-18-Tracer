@@ -9,6 +9,7 @@
 #include <set>
 #include <sstream>
 #include <sys/stat.h>
+#include <algorithm>
 
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Constants.h"
@@ -20,6 +21,8 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/PassPlugin.h"
 
 #include "full_trace.h"
 
@@ -59,6 +62,8 @@ cl::opt<bool>
                     cl::init(false), cl::ValueDisallowed);
 
 namespace {
+
+
 
 void split(const std::string &s, const char delim,
            std::set<std::string> &elems) {
@@ -195,7 +200,7 @@ int getMemSize(Type *T) {
   } else if (T->isIntegerTy()) {
     size = cast<IntegerType>(T)->getBitWidth();
   } else if (T->isVectorTy()) {
-    size = cast<VectorType>(T)->getBitWidth();
+    size = cast<VectorType>(T)->getElementType()->getPrimitiveSizeInBits();
   } else if (T->isArrayTy()) {
     ArrayType *A = dyn_cast<ArrayType>(T);
     size = (int)A->getNumElements() *
@@ -208,7 +213,32 @@ int getMemSize(Type *T) {
   return size;
 }
 
-Tracer::Tracer() : FunctionPass(ID) {}
+Tracer::Tracer() {}
+Tracer::Tracer(Tracer const & t) {}
+
+// llvm::PreservedAnalyses Tracer::run(llvm::Function &F, llvm::FunctionAnalysisManager &)
+// {
+//   bool changed = runOnFunction(F);
+//   return changed ? llvm::PreservedAnalyses::none() : llvm::PreservedAnalyses::all();
+// }
+
+llvm::PreservedAnalyses Tracer::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM)
+{
+  llvm::PassBuilder pb;
+
+  pb.registerModuleAnalyses(MAM);
+
+  doInitialization(M);
+
+  for (auto &F : M)
+  {
+    FunctionAnalysisManager &FAM = MAM.getResult<llvm::FunctionAnalysisManagerModuleProxy>(M).getManager();
+    pb.registerFunctionAnalyses(FAM);
+    runOnFunction(F, FAM);
+  }
+  return llvm::PreservedAnalyses::none();
+}
+
 
 bool Tracer::doInitialization(Module &M) {
   std::set<std::string> user_workloads = getUserWorkloadFunctions();
@@ -217,10 +247,11 @@ bool Tracer::doInitialization(Module &M) {
     return false;
   }
 
+
   auto &llvm_context = M.getContext();
   auto I1Ty = Type::getInt1Ty(llvm_context);
   auto I64Ty = Type::getInt64Ty(llvm_context);
-  auto I8PtrTy = Type::getInt8PtrTy(llvm_context);
+  auto I8PtrTy = PointerType::getUnqual(llvm_context);
   auto VoidTy = Type::getVoidTy(llvm_context);
   auto DoubleTy = Type::getDoubleTy(llvm_context);
 
@@ -265,6 +296,13 @@ bool Tracer::doInitialization(Module &M) {
 
   for (auto i = it; i != eit; ++i) {
     DISubprogram* const S = (*i);
+
+    // If it is not distinct then it is not our function
+    if (!S->isDistinct())
+    {
+      continue;
+    }
+
     StringRef mangledName = S->getLinkageName();
     StringRef name = S->getName();
 
@@ -276,10 +314,10 @@ bool Tracer::doInitialization(Module &M) {
     }
 
     // Checks out whether Name or Mangled Name matches.
-    auto MangledIt = user_workloads.find(mangledName);
+    auto MangledIt = user_workloads.find(mangledName.str());
     bool isMangledMatch = MangledIt != user_workloads.end();
 
-    auto PreMangledIt = user_workloads.find(name);
+    auto PreMangledIt = user_workloads.find(name.str());
     bool isPreMangledMatch = PreMangledIt != user_workloads.end();
 
     if (isMangledMatch | isPreMangledMatch) {
@@ -304,7 +342,7 @@ std::set<std::string> Tracer::getUserWorkloadFunctions() const {
   return user_workloads;
 }
 
-bool Tracer::runOnFunction(Function &F) {
+bool Tracer::runOnFunction(Function &F, FunctionAnalysisManager &FAM) {
   // The tracer only supports C code, not C++, so if there is a mangled name
   // that differs from the canonical name, then it must be a C++ function that
   // should be skipped.
@@ -336,7 +374,7 @@ bool Tracer::runOnFunction(Function &F) {
   // Collect all preheader branch instructions (the one at the end of a
   // preheader block). Use the loop's start location as the preheader's line
   // num.
-  LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+  LoopInfo &LI = FAM.getResult<llvm::LoopAnalysis>(F);
   for (auto bb_it = F.begin(); bb_it != F.end(); ++bb_it) {
     if (Loop *loop = LI.getLoopFor(&*bb_it))
       if (BasicBlock *PHeadBB = loop->getLoopPreheader())
@@ -346,17 +384,17 @@ bool Tracer::runOnFunction(Function &F) {
 
   for (auto bb_it = F.begin(); bb_it != F.end(); ++bb_it) {
     BasicBlock& bb = *bb_it;
-    func_modified = runOnBasicBlock(bb);
+    func_modified = runOnBasicBlock(bb, LI);
   }
   if (F.getName() != "main")
-    func_modified |= runOnFunctionEntry(F);
+    func_modified |= runOnFunctionEntry(F, LI);
 
   purgeDebugInfo();
   delete st;
   return func_modified;
 }
 
-bool Tracer::runOnBasicBlock(BasicBlock &BB) {
+bool Tracer::runOnBasicBlock(BasicBlock &BB, LoopInfo &LI) {
   Function *func = BB.getParent();
   std::string funcName = func->getName().str();
   InstEnv env;
@@ -382,7 +420,7 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB) {
 
   BasicBlock::iterator itr = BB.begin();
   if (isa<PHINode>(itr))
-    handlePhiNodes(&BB, &env);
+    handlePhiNodes(&BB, &env, LI);
 
   // From this point onwards, nodes cannot be PHI nodes.
   BasicBlock::iterator nextitr;
@@ -399,7 +437,7 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB) {
       continue;
 
     // Get static BasicBlock ID: produce bbid
-    makeValueId(&BB, env.bbid);
+    makeValueId(&BB, env.bbid, LI);
     // Get static instruction ID: produce instid
     Instruction* currInst = cast<Instruction>(itr);
     getInstId(currInst, &env);
@@ -436,9 +474,9 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB) {
       continue;
 
     if (isa<CallInst>(currInst) && traceCall) {
-      handleCallInstruction(currInst, &env);
+      handleCallInstruction(currInst, &env, LI);
     } else {
-      handleNonPhiNonCallInstruction(currInst, &env);
+      handleNonPhiNonCallInstruction(currInst, &env, LI);
     }
 
     if (!currInst->getType()->isVoidTy()) {
@@ -455,7 +493,7 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB) {
   return true;
 }
 
-bool Tracer::runOnFunctionEntry(Function& func) {
+bool Tracer::runOnFunctionEntry(Function& func, LoopInfo &LI) {
   // We have to get the first insertion point before we insert any
   // instrumentation!
   BasicBlock* first_bb = cast<BasicBlock>(func.begin());
@@ -506,7 +544,7 @@ bool Tracer::runOnFunctionEntry(Function& func) {
 
     if (arg_it->getType()->isLabelTy()) {
       // The operand name should be the code label itself. It has no value.
-      makeValueId(arg_it, params.operand_name);
+      makeValueId(arg_it, params.operand_name, LI);
       params.is_reg = true;
     } else if (arg_it->getValueID() == Value::FunctionVal) {
       // Nothing to do.
@@ -535,13 +573,15 @@ void Tracer::collectDebugInfo(DbgInfoIntrinsic *debug) {
   } else if (DbgValueInst *dbgValue = dyn_cast<DbgValueInst>(debug)) {
     arg = dbgValue->getValue();
     var = dbgValue->getVariable();
+    
     if (isa<UndefValue>(arg) || !var)
       return;
-  } else if (DbgAddrIntrinsic *dbgAddr = dyn_cast<DbgAddrIntrinsic>(debug)) {
-    arg = dbgDeclare->getAddress();
-    var = dbgAddr->getVariable();
-    if (isa<UndefValue>(arg) || !var)
-      return;
+  // DbgAddr was removed see https://discourse.llvm.org/t/what-is-the-status-of-dbg-addr/62898/5
+  // } else if (DbgAddrIntrinsic *dbgAddr = dyn_cast<DbgAddrIntrinsic>(debug)) {
+  //   arg = dbgDeclare->getAddress();
+  //   var = dbgAddr->getVariable();
+  //   if (isa<UndefValue>(arg) || !var)
+  //     return;
   } else {
       return;
   }
@@ -637,7 +677,7 @@ void Tracer::printParamLine(Instruction *I, int param_num, const char *reg_id,
       IRB.CreateCall(TL_log_double, args);
     } else if (datatype == llvm::Type::PointerTyID) {
       Value *v_value = nullptr;
-      Type *pteetype = value->getType()->getPointerElementType();
+      Type *pteetype = value->getType();
       bool is_string = false;
       if (is_intrinsic) {
         v_value = ConstantInt::get(IRB.getInt64Ty(), 0);
@@ -668,7 +708,7 @@ void Tracer::printParamLine(Instruction *I, int param_num, const char *reg_id,
         IRB.CreateCall(TL_log_string, args);
       else
         IRB.CreateCall(TL_log_ptr, args);
-    } else if (datatype == llvm::Type::VectorTyID) {
+    } else if (datatype == llvm::Type::ScalableVectorTyID || datatype == llvm::Type::FixedVectorTyID) {
       // Give the logger function a pointer to the data. We'll read it out in
       // the logger function itself.
       Value *v_value = createVectorArg(value, IRB);
@@ -847,12 +887,12 @@ void Tracer::processAllocaInstruction(BasicBlock::iterator it) {
   }
 }
 
-void Tracer::makeValueId(Value *value, char *id_str) {
+void Tracer::makeValueId(Value *value, char *id_str, LoopInfo &LI) {
   int id = st->getLocalSlot(value);
   ValueNameLookup name = getValueName(value);
   bool hasName = name.first;
   if (BasicBlock* BB = dyn_cast<BasicBlock>(value)) {
-    LoopInfo &info = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+    LoopInfo &info = LI;
     unsigned loop_depth = info.getLoopDepth(BB);
     // 10^3 - 1 is the maximum loop depth.
     const unsigned kMaxLoopDepthChars = 3;
@@ -907,7 +947,7 @@ void Tracer::setLineNumberIfExists(Instruction *I, InstEnv *env) {
 }
 
 // Handle all phi nodes at the beginning of a basic block.
-void Tracer::handlePhiNodes(BasicBlock* BB, InstEnv* env) {
+void Tracer::handlePhiNodes(BasicBlock* BB, InstEnv* env, LoopInfo &LI) {
   BasicBlock::iterator insertp = BB->getFirstInsertionPt();
   Instruction* insertPointInst = cast<Instruction>(insertp);
 
@@ -923,7 +963,7 @@ void Tracer::handlePhiNodes(BasicBlock* BB, InstEnv* env) {
 
     Value *curr_operand = nullptr;
 
-    makeValueId(BB, env->bbid);
+    makeValueId(BB, env->bbid, LI);
     getInstId(currInst, env);
     setLineNumberIfExists(currInst, env);
 
@@ -935,7 +975,7 @@ void Tracer::handlePhiNodes(BasicBlock* BB, InstEnv* env) {
       for (int i = num_of_operands - 1; i >= 0; i--) {
         BasicBlock *prev_bblock =
             (dyn_cast<PHINode>(currInst))->getIncomingBlock(i);
-        makeValueId(prev_bblock, params.prev_bbid);
+        makeValueId(prev_bblock, params.prev_bbid, LI);
         curr_operand = currInst->getOperand(i);
         params.param_num = i + 1;
         params.setDataTypeAndSize(curr_operand);
@@ -971,7 +1011,7 @@ void Tracer::handlePhiNodes(BasicBlock* BB, InstEnv* env) {
   }
 }
 
-void Tracer::handleCallInstruction(Instruction* inst, InstEnv* env) {
+void Tracer::handleCallInstruction(Instruction* inst, InstEnv* env, LoopInfo &LI) {
   char caller_op_name[256];
 
   CallInst *CI = dyn_cast<CallInst>(inst);
@@ -1052,7 +1092,7 @@ void Tracer::handleCallInstruction(Instruction* inst, InstEnv* env) {
       caller.is_reg = name.first;
       if (curr_operand->getType()->isLabelTy()) {
         // The operand name should be the code label itself. It has no value.
-        makeValueId(curr_operand, caller.operand_name);
+        makeValueId(curr_operand, caller.operand_name, LI);
         caller.is_reg = true;
       } else if (curr_operand->getValueID() == Value::FunctionVal) {
         // TODO: Replace this with an isa<> check instead.
@@ -1066,7 +1106,7 @@ void Tracer::handleCallInstruction(Instruction* inst, InstEnv* env) {
   }
 }
 
-void Tracer::handleNonPhiNonCallInstruction(Instruction *inst, InstEnv* env) {
+void Tracer::handleNonPhiNonCallInstruction(Instruction *inst, InstEnv* env, LoopInfo &LI) {
   char op_name[256];
   printFirstLine(inst, env, inst->getOpcode());
   int num_of_operands = inst->getNumOperands();
@@ -1089,7 +1129,7 @@ void Tracer::handleNonPhiNonCallInstruction(Instruction *inst, InstEnv* env) {
         if (curr_operand->getType()->isVectorTy()) {
           params.value = curr_operand;
         } else if (curr_operand->getType()->isLabelTy()) {
-          makeValueId(curr_operand, params.operand_name);
+          makeValueId(curr_operand, params.operand_name, LI);
           params.is_reg = true;
         } else if (curr_operand->getValueID() == Value::FunctionVal) {
           // TODO: Replace this with an isa<> check instead.
@@ -1152,9 +1192,9 @@ Constant *Tracer::createStringArgIfNotExists(const char *str) {
 
 Tracer::VecBufKey Tracer::createVecBufKey(Type* vector_type) {
   assert(vector_type->isVectorTy());
-  unsigned num_elements = vector_type->getVectorNumElements();
+  unsigned num_elements = cast<VectorType>(vector_type)->getElementCount().getKnownMinValue();
   unsigned scalar_size = vector_type->getScalarSizeInBits() / 8;
-  Type::TypeID element_type = vector_type->getVectorElementType()->getTypeID();
+  Type::TypeID element_type = vector_type->getTypeID();
   VecBufKey key = std::make_tuple(num_elements, scalar_size, element_type);
   return key;
 }
@@ -1176,8 +1216,8 @@ Value *Tracer::createVectorArg(Value *vector, IRBuilder<> &IRB) {
   } else {
     alloca = vector_buffers.at(key);
   }
-  IRB.CreateAlignedStore(vector, alloca, std::get<1>(key));
-  Value *bitcast = IRB.CreatePointerCast(alloca, IRB.getInt8PtrTy());
+  IRB.CreateAlignedStore(vector, alloca, MaybeAlign(std::get<1>(key)));
+  Value *bitcast = IRB.CreatePointerCast(alloca, IRB.getPtrTy());
   return bitcast;
 }
 
@@ -1186,7 +1226,8 @@ void Tracer::getAnalysisUsage(AnalysisUsage& Info) const {
   Info.setPreservesAll();
 }
 
-LabelMapHandler::LabelMapHandler() : ModulePass(ID) {}
+LabelMapHandler::LabelMapHandler() {}
+LabelMapHandler::LabelMapHandler(LabelMapHandler const & l) {};
 LabelMapHandler::~LabelMapHandler() {}
 
 bool LabelMapHandler::runOnModule(Module &M) {
@@ -1197,17 +1238,16 @@ bool LabelMapHandler::runOnModule(Module &M) {
         return false;
 
     IRBuilder<> builder(cast<Instruction>(main->front().getFirstInsertionPt()));
-    Function *traceLoggerInit = cast<Function>(
-        M.getOrInsertFunction("trace_logger_init", builder.getVoidTy()));
-    builder.CreateCall(traceLoggerInit);
+
+    builder.CreateCall(M.getOrInsertFunction("trace_logger_init", builder.getVoidTy()));
     bool contains_labelmap = readLabelMap();
     if (contains_labelmap) {
       if (verbose)
         errs() << "Contents of labelmap:\n" << labelmap_str << "\n";
 
-      Function *labelMapRegister = cast<Function>(M.getOrInsertFunction(
+      FunctionCallee labelMapRegister = M.getOrInsertFunction(
           "trace_logger_register_labelmap", builder.getVoidTy(),
-          builder.getInt8PtrTy(), builder.getInt64Ty()));
+          builder.getPtrTy(), builder.getInt64Ty());
       Value *v_size =
           ConstantInt::get(builder.getInt64Ty(), labelmap_str.length());
       Constant *v_buf = createStringArg(labelmap_str.c_str(), &M);
@@ -1243,9 +1283,47 @@ void LabelMapHandler::deleteLabelMap() {
     }
 }
 
-char Tracer::ID = 0;
-char LabelMapHandler::ID = 0;
-static RegisterPass<Tracer>
-X("fulltrace", "Add full Tracing Instrumentation for Aladdin", false, false);
-static RegisterPass<LabelMapHandler>
-Y("labelmapwriter", "Read and store label maps into instrumented binary", false, false);
+// char Tracer::ID = 0;
+// char LabelMapHandler::ID = 0;
+// static RegisterPass<Tracer>
+// X("fulltrace", "Add full Tracing Instrumentation for Aladdin", false, false);
+// static RegisterPass<LabelMapHandler>
+// Y("labelmapwriter", "Read and store label maps into instrumented binary", false, false);
+
+
+llvm::PassPluginLibraryInfo getPluginInfo()
+{
+  return {LLVM_PLUGIN_API_VERSION, "Tracer", LLVM_VERSION_STRING,
+          [](PassBuilder &PB) {
+            PB.registerPipelineParsingCallback(
+              [](StringRef Name, ModulePassManager &MPM,
+                ArrayRef<PassBuilder::PipelineElement>) {
+                  if (Name == "full-trace")
+                  {
+                    MPM.addPass(Tracer());
+                    return true;
+                  }
+                  return false;                  
+                });
+          
+            PB.registerPipelineParsingCallback(
+              [](StringRef Name, ModulePassManager &MPM,
+              ArrayRef<PassBuilder::PipelineElement>) {
+                if (Name == "labelmapwriter")
+                {
+                  MPM.addPass(LabelMapHandler());
+                  return true;
+                }
+                return false;
+              });
+          
+          
+          }};
+}
+
+
+
+extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
+llvmGetPassPluginInfo() {
+  return getPluginInfo();
+}
