@@ -665,7 +665,7 @@ void Tracer::printParamLine(Instruction *I, int param_num, const char *reg_id,
 
   if (value != nullptr) {
     if (datatype == llvm::Type::IntegerTyID) {
-      Value *v_value = IRB.CreateZExt(value, IRB.getInt64Ty());
+      Value *v_value = IRB.CreateZExtOrTrunc(value, IRB.getInt64Ty());
       Value *args[] = { v_param_num,    v_size,   v_value,     v_is_reg,
                         vv_reg_id, v_is_phi, vv_prev_bbid };
       IRB.CreateCall(TL_log_int, args);
