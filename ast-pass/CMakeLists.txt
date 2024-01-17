@@ -47,25 +47,95 @@ target_link_libraries(get-labeled-stmts
 
   ${_CLANG_LIBS_TO_LINK_}
 
-  LLVMX86AsmParser # MC, MCParser, Support, X86Desc, X86Info
-  LLVMX86Desc # MC, Support, X86AsmPrinter, X86Info
-  #LLVMX86AsmPrinter # MC, Support, X86Utils
-  LLVMX86Info # MC, Support, Target
-  #LLVMX86Utils # Core, Support
+  LLVMWindowsManifest
+  LLVMXRay
+  LLVMDlltoolDriver
+  LLVMTextAPIBinaryReader
+  LLVMCoverage
+  LLVMLineEditor
+  LLVMX86TargetMCA
+  LLVMX86Disassembler
+  LLVMX86AsmParser
+  LLVMX86CodeGen
+  LLVMX86Desc
+  LLVMX86Info
+  LLVMOrcDebugging
+  LLVMOrcJIT
+  LLVMWindowsDriver
+  LLVMMCJIT
+  LLVMJITLink
+  LLVMInterpreter
+  LLVMExecutionEngine
+  LLVMRuntimeDyld
+  LLVMOrcTargetProcess
+  LLVMOrcShared
+  LLVMDWP
+  LLVMDebugInfoLogicalView
+  LLVMDebugInfoGSYM
+  LLVMOption
+  LLVMObjectYAML
+  LLVMObjCopy
+  LLVMMCA
+  LLVMMCDisassembler
+  LLVMLTO
+  LLVMPasses
+  LLVMHipStdPar
+  LLVMCFGuard
+  LLVMCoroutines
   LLVMipo
+  LLVMVectorize
+  LLVMLinker
+  LLVMInstrumentation
+  LLVMFrontendOpenMP
+  LLVMFrontendOffloading
+  LLVMFrontendOpenACC
+  LLVMFrontendHLSL
+  LLVMFrontendDriver
+  LLVMExtensions
+  LLVMDWARFLinkerParallel
+  LLVMDWARFLinkerClassic
+  LLVMDWARFLinker
+  LLVMGlobalISel
+  LLVMMIRParser
+  LLVMAsmPrinter
+  LLVMSelectionDAG
+  LLVMCodeGen
+  LLVMTarget
+  LLVMObjCARCOpts
+  LLVMCodeGenTypes
+  LLVMIRPrinter
+  LLVMInterfaceStub
+  LLVMFileCheck
+  LLVMFuzzMutate
   LLVMScalarOpts
   LLVMInstCombine
+  LLVMAggressiveInstCombine
   LLVMTransformUtils
+  LLVMBitWriter
   LLVMAnalysis
-  LLVMTarget
-  LLVMOption # Support
-  LLVMMCParser # MC, Support
-  LLVMMC # Object, Support
-  LLVMObject # BitReader, Core, Support
-  LLVMBitReader # Core, Support
-  LLVMCore # Support
+  LLVMProfileData
+  LLVMSymbolize
+  LLVMDebugInfoBTF
+  LLVMDebugInfoPDB
+  LLVMDebugInfoMSF
+  LLVMDebugInfoDWARF
+  LLVMObject
+  LLVMTextAPI
+  LLVMMCParser
+  LLVMIRReader
+  LLVMAsmParser
+  LLVMMC
+  LLVMDebugInfoCodeView
+  LLVMBitReader
+  LLVMFuzzerCLI
+  LLVMCore
+  LLVMRemarks
+  LLVMBitstreamReader
+  LLVMBinaryFormat
+  LLVMTargetParser
+  LLVMTableGen
   LLVMSupport
-  LLVM-18
+  LLVMDemangle
 
   pthread
   z
@@ -74,4 +144,4 @@ target_link_libraries(get-labeled-stmts
   
 )
 
-target_link_options(get-labeled-stmts PRIVATE "LINKER:--version-script,/home/jack2bs/Documents/LLVM-Tracer/ast-pass/linker_script.txt")
+target_link_options(get-labeled-stmts PRIVATE "LINKER:--version-script,/home/jack2bs/Documents/LLVM-18-Tracer/ast-pass/linker_script.txt")
